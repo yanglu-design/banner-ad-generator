@@ -29,7 +29,13 @@ jobs:
           test -f index.html
           test -f src/standalone.js
           test -f src/styles.css
-          test -f src/iconData.js
+          test -f src/icon-data/normal.js
+          test -f src/icon-data/feature.js
+          test -f src/icon-data/important.js
+          test -f src/icon-data/survey.js
+          test -f src/icon-data/revisit.js
+          test -f src/icon-data/tutorial.js
+          test -f src/icon-data/click-hand.js
 
       - name: Check JavaScript syntax
         run: node --check src/standalone.js
@@ -37,7 +43,6 @@ jobs:
       - name: Check page references
         run: |
           grep -q './src/styles.css' index.html
-          grep -q './src/iconData.js' index.html
           grep -q './src/standalone.js' index.html
 
   deploy:

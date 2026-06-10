@@ -151,12 +151,75 @@ const decorationAssetMap = {
   "click-hand": "./icon/指引装饰-通用.svg",
 };
 
+const iconDataFileMap = {
+  normal: "./src/icon-data/normal.js?v=20260610-lazy-icons-1",
+  feature: "./src/icon-data/feature.js?v=20260610-lazy-icons-1",
+  important: "./src/icon-data/important.js?v=20260610-lazy-icons-1",
+  survey: "./src/icon-data/survey.js?v=20260610-lazy-icons-1",
+  revisit: "./src/icon-data/revisit.js?v=20260610-lazy-icons-1",
+  tutorial: "./src/icon-data/tutorial.js?v=20260610-lazy-icons-1",
+  "click-hand": "./src/icon-data/click-hand.js?v=20260610-lazy-icons-1",
+};
+
+const iconDataLoaders = new Map();
+
 function getIconSource(type) {
-  return window.bannerIconData?.[type] || iconAssetMap[type] || iconAssetMap.normal;
+  return getInlineAssetSource(type) || iconAssetMap[type] || iconAssetMap.normal;
 }
 
 function getDecorationSource(type) {
-  return window.bannerIconData?.[type] || decorationAssetMap[type] || decorationAssetMap["click-hand"];
+  return getInlineAssetSource(type) || decorationAssetMap[type] || decorationAssetMap["click-hand"];
+}
+
+function getInlineAssetSource(type) {
+  return window.bannerIconChunks?.[type] || "";
+}
+
+function ensureInlineAsset(type) {
+  if (!type || getInlineAssetSource(type)) {
+    return Promise.resolve(getInlineAssetSource(type));
+  }
+
+  if (iconDataLoaders.has(type)) {
+    return iconDataLoaders.get(type);
+  }
+
+  const src = iconDataFileMap[type];
+  if (!src) {
+    return Promise.resolve("");
+  }
+
+  const loader = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.async = true;
+    script.src = src;
+    script.onload = () => resolve(getInlineAssetSource(type));
+    script.onerror = () => reject(new Error(`图标素材加载失败：${type}`));
+    document.head.append(script);
+  });
+
+  iconDataLoaders.set(type, loader);
+  return loader;
+}
+
+function getConfigAssetTypes(config) {
+  return [
+    config.icon.enabled ? config.icon.type : "",
+    config.decoration.enabled ? config.decoration.type : "",
+  ].filter(Boolean);
+}
+
+async function ensureConfigAssets(config) {
+  await Promise.all(getConfigAssetTypes(config).map((type) => ensureInlineAsset(type)));
+}
+
+function preloadConfigAssets(config) {
+  const missingTypes = getConfigAssetTypes(config).filter((type) => !getInlineAssetSource(type));
+  if (!missingTypes.length) return;
+
+  Promise.all(missingTypes.map((type) => ensureInlineAsset(type)))
+    .then(() => renderAll())
+    .catch((error) => console.warn(error));
 }
 
 const fieldIds = {
@@ -271,7 +334,7 @@ function initPage() {
     <main class="appShell">
       <header class="pageHeader">
         <div>
-          <h1>横幅广告配置器</h1>
+          <h1>横幅公告配置器</h1>
           <p>配置系统横幅公告内容，实时预览效果并下载使用</p>
         </div>
         <div class="headerActions">
@@ -376,6 +439,7 @@ function renderAll() {
   const config = buildConfig();
   BannerPreview(getField(fieldIds.preview), config);
   updateMessageMeta(config.content.message);
+  preloadConfigAssets(config);
 }
 
 function updateMessageMeta(message) {
@@ -482,6 +546,7 @@ async function downloadPreviewPng(event) {
 
   try {
     const config = buildConfig();
+    await ensureConfigAssets(config);
     const canvas = await renderPreviewSvgToCanvas(config);
     const blob = await canvasToPngBlob(canvas);
     await savePngBlob(blob, `${config.templateType}-banner.png`);
@@ -743,85 +808,6 @@ async function savePngBlob(blob, filename) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-async function renderBannerToCanvas(config) {
-  const canvas = document.createElement("canvas");
-  canvas.width = config.metrics.canvasWidth;
-  canvas.height = config.height;
-  const ctx = canvas.getContext("2d");
-  const contentWidth = config.metrics.contentWidth;
-  const buttonWidth = config.button.enabled ? config.metrics.buttonWidth : 0;
-  const handWidth = config.decoration.enabled && config.button.enabled ? 25 : 0;
-  const trackWidth = contentWidth + (config.button.enabled ? config.metrics.gap + buttonWidth + handWidth : 0);
-  const startX = config.layout === "center" ? (config.metrics.canvasWidth - trackWidth) / 2 : 72;
-  const contentX = startX;
-  const contentY = 8;
-  const buttonX = contentX + contentWidth + config.metrics.gap;
-  const handX = buttonX + buttonWidth - 31;
-
-  drawBackground(ctx, config.theme.background[config.layout], config.metrics.canvasWidth, config.height);
-  drawRoundedRect(ctx, contentX, contentY, contentWidth, 44, 22, config.theme.contentStroke);
-  drawRoundedRect(ctx, contentX + 1, contentY + 1, contentWidth - 2, 42, 21, config.theme.contentFill);
-
-  if (config.icon.enabled) {
-    const icon = await loadImage(getIconSource(config.icon.type));
-    ctx.drawImage(icon, contentX - 80, 0, 80, 60);
-  }
-
-  drawText(ctx, config.content.message, contentX + 32, 30, config.theme.textColor);
-
-  if (config.button.enabled) {
-    drawRoundedRect(ctx, buttonX, contentY, buttonWidth, 44, 22, config.theme.contentStroke);
-    drawRoundedRect(ctx, buttonX + 1, contentY + 1, buttonWidth - 2, 42, 21, config.theme.buttonFill);
-    drawCenteredText(ctx, config.button.text, buttonX + buttonWidth / 2, 30, config.theme.textColor);
-
-    if (config.decoration.enabled) {
-      const hand = await loadImage(getDecorationSource(config.decoration.type));
-      ctx.drawImage(hand, handX, 27, 40, 33);
-    }
-  }
-
-  return canvas;
-}
-
-function drawBackground(ctx, fill, width, height) {
-  ctx.fillStyle = createLinearGradient(ctx, fill, 0, 0, width, 0);
-  ctx.fillRect(0, 0, width, height);
-}
-
-function drawRoundedRect(ctx, x, y, width, height, radius, fill) {
-  ctx.beginPath();
-  ctx.roundRect(x, y, width, height, radius);
-  ctx.fillStyle = createLinearGradient(ctx, fill, x, y, x + width, y);
-  ctx.fill();
-}
-
-function drawText(ctx, text, x, y, color) {
-  ctx.fillStyle = color;
-  ctx.font = '700 18px "Alimama ShuHeiTi", "PingFang SC", "Microsoft YaHei", sans-serif';
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, x, y);
-}
-
-function drawCenteredText(ctx, text, x, y, color) {
-  ctx.textAlign = "center";
-  drawText(ctx, text, x, y, color);
-  ctx.textAlign = "start";
-}
-
-function createLinearGradient(ctx, value, x0, y0, x1, y1) {
-  const colors = String(value).match(/#[0-9a-fA-F]{6}/g) || ["#FFFFFF"];
-  const gradient = ctx.createLinearGradient(x0, y0, x1, y1);
-  if (colors.length === 1) {
-    gradient.addColorStop(0, colors[0]);
-    gradient.addColorStop(1, colors[0]);
-    return gradient;
-  }
-  colors.forEach((color, index) => {
-    gradient.addColorStop(index / (colors.length - 1), color);
-  });
-  return gradient;
 }
 
 function loadImage(src) {
